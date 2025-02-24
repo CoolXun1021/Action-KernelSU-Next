@@ -6,11 +6,11 @@ on:
       CPU:
         description: "Processor architecture branch"
         required: true
-        default: 'sm8550'  # Snapdragon 8 Gen 2, likely for SM-X810
+        default: 'sm8550'  # Snapdragon 8 Gen 2 for SM-X810
       FEIL:
         description: "Configuration file"
         required: true
-        default: 'gki_defconfig'  # Placeholder; adjust to actual defconfig
+        default: 'gki_defconfig'  # Placeholder; replace with actual defconfig
       CPUD:
         description: "Processor codename"
         required: true
@@ -74,15 +74,23 @@ jobs:
       - name: Initialize and sync repository
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
-          # Download the kernel source for SM-X810 from Samsung's open-source site
-          # Replace the URL with the actual link from https://opensource.samsung.com for SM-X810
-          curl -L "https://opensource.samsung.com/uploadSearch?searchValue=SM-X810" -o kernel_source.tar.gz
-          # Extract the downloaded archive (adjust the file name if needed)
-          tar -xzf kernel_source.tar.gz
-          # Move into the kernel directory (adjust based on actual folder name after extraction)
-          mv SM-X810_* kernel || mv kernel_* kernel
+          # Replace with the actual direct download URL for SM-X810 kernel source
+          curl -L --retry 3 --retry-delay 5 "https://opensource.samsung.com/down?fileName=SM-X810_Kernel.tar.gz" -o kernel_source.tar.gz
+          # Check the file type
+          file kernel_source.tar.gz
+          # Extract based on file type
+          if file kernel_source.tar.gz | grep -q "gzip compressed"; then
+            tar -xzf kernel_source.tar.gz
+          elif file kernel_source.tar.gz | grep -q "POSIX tar archive"; then
+            tar -xf kernel_source.tar.gz
+          else
+            echo "Error: Downloaded file is not a tar or tar.gz archive"
+            exit 1
+          fi
+          # Move into the kernel directory (adjust based on actual extracted folder name)
+          mv SM-X810_* kernel || mv kernel_* kernel || echo "Adjust folder name as needed"
           cd kernel
-          # Clean up version string
+          # Clean up version string if present
           sed -i 's/ -dirty//g' scripts/setlocalversion || echo "No setlocalversion script found"
 
       # Configure LTO to THIN
