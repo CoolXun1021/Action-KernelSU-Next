@@ -110,8 +110,6 @@ jobs:
 
       # 设置 SUSFS
       - name: Set up SUSFS
-              # 设置 SUSFS
-      - name: Set up SUSFS
         if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
           cd kernel_workspace
