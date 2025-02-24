@@ -6,27 +6,27 @@ on:
       CPU:
         description: "Processor architecture branch"
         required: true
-        default: 'exynos2100'  # Example for Samsung Exynos, adjust based on SM-X810 chipset
+        default: 'sm8550'  # Snapdragon 8 Gen 2, likely for SM-X810
       FEIL:
         description: "Configuration file"
         required: true
-        default: 'sm-x810_defconfig'  # Example defconfig for SM-X810
+        default: 'gki_defconfig'  # Placeholder; adjust to actual defconfig
       CPUD:
         description: "Processor codename"
         required: true
-        default: 'exynos2100'  # Adjust based on actual chipset (possibly Exynos or Snapdragon)
+        default: 'kalama'  # Codename for Snapdragon 8 Gen 2
       ANDROID_VERSION:
         description: "Android version for kernel"
         required: true
-        default: 'android13'  # Assuming Android 13 for SM-X810
+        default: 'android14'  # Likely Android 14 for Tab S9
       KERNEL_VERSION:
         description: "Kernel version"
         required: true
-        default: '5.15'  # Common Samsung kernel version, adjust as needed
+        default: '5.15'  # Common for recent Samsung devices
       BUILD_METHOD:
         description: "Build method"
         required: true
-        default: 'samsung'  # Samsung-specific build method
+        default: 'samsung'
       KSUNEXT_ENABLED:
         description: "Enable KernelSU Next"
         required: true
@@ -70,22 +70,20 @@ jobs:
           sudo apt update -y && sudo apt upgrade -y
           sudo apt install -y python3 git curl bc bison build-essential flex libssl-dev
 
-      # Install repo tool
-      - name: Install repo tool
-        run: |
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
-          chmod +x /usr/local/bin/repo
-
       # Initialize and sync Samsung kernel repository
       - name: Initialize and sync repository
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
-          # Samsung kernel sources are typically hosted on their open-source portal
-          git clone https://github.com/SamsungOpenSource/kernel.git -b samsung-${{ github.event.inputs.CPU }} --depth=1
+          # Download the kernel source for SM-X810 from Samsung's open-source site
+          # Replace the URL with the actual link from https://opensource.samsung.com for SM-X810
+          curl -L "https://opensource.samsung.com/uploadSearch?searchValue=SM-X810" -o kernel_source.tar.gz
+          # Extract the downloaded archive (adjust the file name if needed)
+          tar -xzf kernel_source.tar.gz
+          # Move into the kernel directory (adjust based on actual folder name after extraction)
+          mv SM-X810_* kernel || mv kernel_* kernel
           cd kernel
-          # Remove unnecessary files or adjust as per Samsung kernel structure
-          rm -f abi_gki_protected_exports_* 2>/dev/null || echo "No protected exports!"
-          sed -i 's/ -dirty//g' scripts/setlocalversion
+          # Clean up version string
+          sed -i 's/ -dirty//g' scripts/setlocalversion || echo "No setlocalversion script found"
 
       # Configure LTO to THIN
       - name: Configure LTO to THIN
@@ -132,7 +130,6 @@ jobs:
       - name: Build kernel
         run: |
           cd kernel_workspace/kernel
-          # Samsung-specific build command
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- ${{ github.event.inputs.FEIL }}
           make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
 
