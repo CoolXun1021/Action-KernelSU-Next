@@ -62,7 +62,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt update -y && sudo apt upgrade -y
-          sudo apt install -y python3 git curl bc bison flex libssl-dev make
+          sudo apt install -y python3 git curl bc bison flex libssl-dev make gcc-aarch64-linux-gnu
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
           chmod +x /usr/local/bin/repo
 
@@ -111,12 +111,10 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }} --depth=1
           git clone https://github.com/TheWildJames/kernel_patches.git --depth=1
           cd kernel_platform
-          # 应用 susfs4ksu 补丁
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
           cp -r ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp -r ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-          # 应用 SUSFS v1.5.5 补丁
           cd KernelSU-Next
           cp ../../kernel_patches/0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch ./
           echo "Debug: Applying SUSFS patch to KernelSU-Next"
@@ -125,14 +123,12 @@ jobs:
             echo "Debug: Contents of kernel/throne_tracker.h.rej:"
             cat kernel/throne_tracker.h.rej
           fi
-          # 应用其他补丁
           cd ../common
           echo "Debug: Applying SUSFS GKI patch"
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || exit 1
           cp ../../kernel_patches/69_hide_stuff.patch ./
           echo "Debug: Applying hide stuff patch"
           patch -p1 -F 3 < 69_hide_stuff.patch || exit 1
-          # 提交更改
           git add -A && git commit -m "Integrate SUSFS into kernel" || true
           cd ../msm-kernel && git add -A && git commit -m "Integrate SUSFS into msm-kernel" || true
 
@@ -140,7 +136,17 @@ jobs:
       - name: Configure kernel options
         run: |
           cd kernel_workspace/kernel_platform/common
-          make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
+          # 调试：检查目录和工具链
+          echo "Debug: Current directory: $(pwd)"
+          echo "Debug: Checking aarch64-linux-gnu-gcc availability:"
+          aarch64-linux-gnu-gcc --version || echo "aarch64-linux-gnu-gcc not found"
+          # 创建输出目录
+          mkdir -p ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki
+          # 生成初始配置
+          echo "Debug: Running make gki_defconfig"
+          make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig || exit 1
+          # 添加自定义配置
+          echo "Debug: Adding custom config options"
           cat << EOF >> ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/.config
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
@@ -162,7 +168,12 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_SECURITY_SELINUX=y
           EOF
-          make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          # 验证 .config 文件
+          echo "Debug: Checking .config file"
+          cat ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/.config
+          # 更新配置
+          echo "Debug: Running make olddefconfig"
+          make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig || exit 1
 
       # 编译内核
       - name: Compile kernel
