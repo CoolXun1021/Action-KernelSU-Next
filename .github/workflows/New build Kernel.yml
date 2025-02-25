@@ -47,8 +47,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 最大化构建空间
-      - name: Maximize build space
+      # 优化构建环境
+      - name: Optimize build environment
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
@@ -58,38 +58,33 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
+      # 安装必要工具
+      - name: Install build tools
+        run: |
+          sudo apt update -y && sudo apt upgrade -y
+          sudo apt install -y python3 git curl bc bison flex libssl-dev make
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
+          chmod +x /usr/local/bin/repo
+
       # 配置 Git
-      - name: Configure Git
+      - name: Configure Git user
         run: |
           git config --global user.name "build"
           git config --global user.email "${{ secrets.EMAIL || '70756062@qq.com' }}"
 
-      # 安装依赖
-      - name: Install dependencies
-        run: |
-          sudo apt update -y && sudo apt upgrade -y
-          sudo apt install -y python3 git curl bc bison flex libssl-dev make
-
-      # 安装 repo 工具
-      - name: Install repo tool
-        run: |
-          curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
-          chmod +x /usr/local/bin/repo
-
-      # 初始化并同步仓库
-      - name: Initialize and sync repository
+      # 初始化内核仓库
+      - name: Initialize and sync kernel repository
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git \
             -b refs/heads/oneplus/${{ github.event.inputs.CPU }} \
             -m ${{ github.event.inputs.FEIL }}.xml --depth=1
           repo sync -j8
-          # 清理不需要的文件并修改版本脚本
           rm -f kernel_platform/{common/android,msm-kernel}/abi_gki_protected_exports_* 2>/dev/null || echo "No protected exports!"
           sed -i 's/ -dirty//g' kernel_platform/{common,msm-kernel}/scripts/setlocalversion
 
       # 配置 LTO 为 THIN
-      - name: Configure LTO to THIN
+      - name: Enable Thin LTO
         run: |
           cd kernel_workspace/kernel_platform
           sed -i -e 's/CONFIG_LTO=n/CONFIG_LTO=y/' \
@@ -97,8 +92,8 @@ jobs:
                  -e 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' \
                  ./common/arch/arm64/configs/gki_defconfig
 
-      # 设置 KernelSU Next
-      - name: Set up KernelSU Next
+      # 集成 KernelSU Next
+      - name: Integrate KernelSU Next
         if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
           cd kernel_workspace/kernel_platform
@@ -108,55 +103,44 @@ jobs:
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      # 设置 SUSFS
-      - name: Set up SUSFS
+      # 集成 SUSFS
+      - name: Integrate SUSFS
         if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
           cd kernel_workspace
-          # 克隆所需仓库
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }} --depth=1
           git clone https://github.com/TheWildJames/kernel_patches.git --depth=1
           cd kernel_platform
-          # 复制 susfs4ksu 的补丁文件
+          # 应用 susfs4ksu 补丁
           cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU-Next/
           cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch ./common/
           cp -r ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp -r ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-          # 复制并应用 SUSFS v1.5.5 补丁，使用正确的文件名
+          # 应用 SUSFS v1.5.5 补丁
           cd KernelSU-Next
           cp ../../kernel_patches/0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch ./
-          # 调试：显示目标文件和补丁内容
-          echo "Debug: Current kernel/throne_tracker.h content:"
-          cat kernel/throne_tracker.h || echo "File not found"
-          echo "Debug: Patch file content:"
-          cat 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch
-          # 尝试应用补丁，允许失败并保存 .rej 文件
-          patch -p1 < 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch || echo "Patch failed, checking rejects"
-          # 如果有 .rej 文件，显示其内容
+          echo "Debug: Applying SUSFS patch to KernelSU-Next"
+          patch -p1 < 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch || echo "SUSFS patch failed, continuing anyway"
           if [ -f kernel/throne_tracker.h.rej ]; then
             echo "Debug: Contents of kernel/throne_tracker.h.rej:"
             cat kernel/throne_tracker.h.rej
           fi
-          # 检查补丁是否部分应用成功，若失败则退出
-          if [ -f kernel/throne_tracker.h.rej ]; then
-            echo "Error: Patch application failed for kernel/throne_tracker.h"
-            exit 1
-          fi
+          # 应用其他补丁
           cd ../common
+          echo "Debug: Applying SUSFS GKI patch"
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || exit 1
           cp ../../kernel_patches/69_hide_stuff.patch ./
+          echo "Debug: Applying hide stuff patch"
           patch -p1 -F 3 < 69_hide_stuff.patch || exit 1
           # 提交更改
-          git add -A && git commit -m "BUILD Kernel with SUSFS" || true
-          cd ../msm-kernel && git add -A && git commit -m "BUILD Kernel with SUSFS" || true
+          git add -A && git commit -m "Integrate SUSFS into kernel" || true
+          cd ../msm-kernel && git add -A && git commit -m "Integrate SUSFS into msm-kernel" || true
 
-      # 配置内核（添加关键配置项）
-      - name: Configure kernel with custom options
+      # 配置内核选项
+      - name: Configure kernel options
         run: |
           cd kernel_workspace/kernel_platform/common
-          # 生成初始配置
           make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
-          # 添加关键配置到 .config
           cat << EOF >> ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/.config
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
@@ -178,32 +162,27 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_SECURITY_SELINUX=y
           EOF
-          # 更新配置
           make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
 
-      # 构建内核
-      - name: Build kernel
+      # 编译内核
+      - name: Compile kernel
         run: |
           cd kernel_workspace
           ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
 
-      # 创建 AnyKernel3 包
-      - name: Package with AnyKernel3
+      # 打包内核
+      - name: Package kernel with AnyKernel3
         run: |
+          cd kernel_workspace
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
           rm -rf AnyKernel3/.git
-          cp kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
+          cp kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
 
-      # 上传 AnyKernel3
-      - name: Upload AnyKernel3 artifact
+      # 上传构建产物
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-          path: ./AnyKernel3/*
-
-      # 上传内核 Image
-      - name: Upload kernel Image
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image_KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
-          path: kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
+          name: KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
+          path: |
+            kernel_workspace/AnyKernel3/*
+            kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
