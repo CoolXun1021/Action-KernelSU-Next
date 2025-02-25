@@ -47,7 +47,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 优化构建环境
       - name: Optimize build environment
         uses: easimon/maximize-build-space@master
         with:
@@ -58,7 +57,6 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
-      # 安装必要工具
       - name: Install build tools
         run: |
           sudo apt update -y && sudo apt upgrade -y
@@ -66,13 +64,11 @@ jobs:
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
           chmod +x /usr/local/bin/repo
 
-      # 配置 Git
       - name: Configure Git user
         run: |
           git config --global user.name "build"
           git config --global user.email "${{ secrets.EMAIL || '70756062@qq.com' }}"
 
-      # 初始化内核仓库
       - name: Initialize and sync kernel repository
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
@@ -83,7 +79,6 @@ jobs:
           rm -f kernel_platform/{common/android,msm-kernel}/abi_gki_protected_exports_* 2>/dev/null || echo "No protected exports!"
           sed -i 's/ -dirty//g' kernel_platform/{common,msm-kernel}/scripts/setlocalversion
 
-      # 配置 LTO 为 THIN
       - name: Enable Thin LTO
         run: |
           cd kernel_workspace/kernel_platform
@@ -92,7 +87,6 @@ jobs:
                  -e 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' \
                  ./common/arch/arm64/configs/gki_defconfig
 
-      # 集成 KernelSU Next
       - name: Integrate KernelSU Next
         if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
@@ -103,7 +97,6 @@ jobs:
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      # 集成 SUSFS
       - name: Integrate SUSFS
         if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
@@ -132,17 +125,22 @@ jobs:
           git add -A && git commit -m "Integrate SUSFS into kernel" || true
           cd ../msm-kernel && git add -A && git commit -m "Integrate SUSFS into msm-kernel" || true
 
-      # 调试 sucompat.c 文件以定位 execve_kp 问题
-      - name: Debug sucompat.c
+      - name: Debug and fix sucompat.c
         if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
           cd kernel_workspace/kernel_platform/common/drivers/kernelsu
-          echo "Debug: Checking for execve_kp in sucompat.c"
-          grep "execve_kp" sucompat.c || echo "execve_kp not found in sucompat.c"
-          echo "Debug: Showing lines around 380 in sucompat.c"
+          echo "Debug: Checking for execve_kp in KernelSU source"
+          grep -r "execve_kp" ../.. || echo "execve_kp not found in KernelSU source"
+          echo "Debug: Showing lines around 380 in sucompat.c before fix"
+          sed -n '370,390p' sucompat.c
+          # 临时修复：注释掉 execve_kp 相关代码
+          echo "Debug: Applying temporary fix for execve_kp"
+          sed -i '380s/^/\/\//' sucompat.c  # 注释掉 extern 声明
+          sed -i '385s/^/\/\//' sucompat.c  # 注释掉 register_kprobe
+          sed -i '389s/^/\/\//' sucompat.c  # 注释掉 unregister_kprobe
+          echo "Debug: Showing lines around 380 in sucompat.c after fix"
           sed -n '370,390p' sucompat.c
 
-      # 配置内核选项
       - name: Configure kernel options
         run: |
           cd kernel_workspace/kernel_platform/common
@@ -179,15 +177,13 @@ jobs:
           echo "Debug: Running make olddefconfig"
           make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig || exit 1
 
-      # 编译内核并添加调试输出
       - name: Compile kernel
         run: |
           cd kernel_workspace
-          echo "Debug: Showing sucompat.c context before compilation"
+          echo "Debug: Final check of sucompat.c before compilation"
           sed -n '370,390p' kernel_platform/common/drivers/kernelsu/sucompat.c
           ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
 
-      # 打包内核
       - name: Package kernel with AnyKernel3
         run: |
           cd kernel_workspace
@@ -195,7 +191,6 @@ jobs:
           rm -rf AnyKernel3/.git
           cp kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
 
-      # 上传构建产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
