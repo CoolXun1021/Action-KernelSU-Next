@@ -125,7 +125,23 @@ jobs:
           # 复制并应用 SUSFS v1.5.5 补丁，使用正确的文件名
           cd KernelSU-Next
           cp ../../kernel_patches/0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch ./
-          patch -p1 < 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch || exit 1
+          # 调试：显示目标文件和补丁内容
+          echo "Debug: Current kernel/throne_tracker.h content:"
+          cat kernel/throne_tracker.h || echo "File not found"
+          echo "Debug: Patch file content:"
+          cat 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch
+          # 尝试应用补丁，允许失败并保存 .rej 文件
+          patch -p1 < 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch || echo "Patch failed, checking rejects"
+          # 如果有 .rej 文件，显示其内容
+          if [ -f kernel/throne_tracker.h.rej ]; then
+            echo "Debug: Contents of kernel/throne_tracker.h.rej:"
+            cat kernel/throne_tracker.h.rej
+          fi
+          # 检查补丁是否部分应用成功，若失败则退出
+          if [ -f kernel/throne_tracker.h.rej ]; then
+            echo "Error: Patch application failed for kernel/throne_tracker.h"
+            exit 1
+          fi
           cd ../common
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || exit 1
           cp ../../kernel_patches/69_hide_stuff.patch ./
