@@ -47,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 优化构建环境
       - name: Optimize build environment
         uses: easimon/maximize-build-space@master
         with:
@@ -57,6 +58,7 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
+      # 安装必要工具
       - name: Install build tools
         run: |
           sudo apt update -y && sudo apt upgrade -y
@@ -64,11 +66,13 @@ jobs:
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
           chmod +x /usr/local/bin/repo
 
+      # 配置 Git
       - name: Configure Git user
         run: |
           git config --global user.name "build"
           git config --global user.email "${{ secrets.EMAIL || '70756062@qq.com' }}"
 
+      # 初始化内核仓库
       - name: Initialize and sync kernel repository
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
@@ -79,6 +83,7 @@ jobs:
           rm -f kernel_platform/{common/android,msm-kernel}/abi_gki_protected_exports_* 2>/dev/null || echo "No protected exports!"
           sed -i 's/ -dirty//g' kernel_platform/{common,msm-kernel}/scripts/setlocalversion
 
+      # 配置 LTO 为 THIN
       - name: Enable Thin LTO
         run: |
           cd kernel_workspace/kernel_platform
@@ -87,6 +92,7 @@ jobs:
                  -e 's/CONFIG_LTO_CLANG_NONE=y/CONFIG_LTO_CLANG_THIN=y/' \
                  ./common/arch/arm64/configs/gki_defconfig
 
+      # 集成 KernelSU Next
       - name: Integrate KernelSU Next
         if: github.event.inputs.KSUNEXT_ENABLED == 'true'
         run: |
@@ -97,6 +103,7 @@ jobs:
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
           sed -i "s/DKSU_VERSION=16/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
+      # 集成 SUSFS
       - name: Integrate SUSFS
         if: github.event.inputs.SUSFS_ENABLED == 'true'
         run: |
@@ -109,7 +116,7 @@ jobs:
           cp -r ../susfs4ksu/kernel_patches/fs/* ./common/fs/
           cp -r ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
           cd KernelSU-Next
-          cp ../../kernel_patches/0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch ./
+          cp ../../kernel_patches/0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch ./ 
           echo "Debug: Applying SUSFS patch to KernelSU-Next"
           patch -p1 < 0001-kernel-patch-susfs-v1.5.5-to-KernelSU-Next-7a08683c7.patch || echo "SUSFS patch failed, continuing anyway"
           if [ -f kernel/throne_tracker.h.rej ]; then
@@ -119,82 +126,79 @@ jobs:
           cd ../common
           echo "Debug: Applying SUSFS GKI patch"
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || exit 1
-          cp ../../kernel_patches/69_hide_stuff.patch ./
+          cp ../../kernel_patches/69_hide_stuff.patch ./ 
           echo "Debug: Applying hide stuff patch"
           patch -p1 -F 3 < 69_hide_stuff.patch || exit 1
           git add -A && git commit -m "Integrate SUSFS into kernel" || true
           cd ../msm-kernel && git add -A && git commit -m "Integrate SUSFS into msm-kernel" || true
 
-      - name: Debug and fix sucompat.c
-        if: github.event.inputs.KSUNEXT_ENABLED == 'true'
-        run: |
-          cd kernel_workspace/kernel_platform/common/drivers/kernelsu
-          echo "Debug: Checking for execve_kp in KernelSU source"
-          grep -r "execve_kp" ../.. || echo "execve_kp not found in KernelSU source"
-          echo "Debug: Showing lines around 380 in sucompat.c before fix"
-          sed -n '370,390p' sucompat.c
-          echo "Debug: Applying temporary fix for execve_kp"
-          sed -i '380s/^/\/\//' sucompat.c  # 注释掉 extern 声明
-          sed -i '385s/^/\/\//' sucompat.c  # 注释掉 register_kprobe
-          sed -i '389s/^/\/\//' sucompat.c  # 注释掉 unregister_kprobe
-          echo "Debug: Showing lines around 380 in sucompat.c after fix"
-          sed -n '370,390p' sucompat.c
-
+      # 配置内核选项
       - name: Configure kernel options
         run: |
           cd kernel_workspace/kernel_platform/common
+          # 调试：检查目录和工具链
           echo "Debug: Current directory: $(pwd)"
           echo "Debug: Checking aarch64-linux-gnu-gcc availability:"
           aarch64-linux-gnu-gcc --version || echo "aarch64-linux-gnu-gcc not found"
+          # 创建输出目录
           mkdir -p ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki
+          # 生成初始配置
           echo "Debug: Running make gki_defconfig"
           make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig || exit 1
+          # 添加自定义配置
           echo "Debug: Adding custom config options"
           cat << EOF >> ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/.config
           CONFIG_KPROBES=y
           CONFIG_HAVE_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_KSU=y
-          CONFIG_KSU_WITH_KPROBES=y
+          # CONFIG_KSU_DEBUG is not set
+          # CONFIG_KSU_ALLOWLIST_WORKAROUND is not set
           CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_SU=n
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          # CONFIG_KSU_SUSFS_SUS_OVERLAYFS is not set
           CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
           CONFIG_KSU_SUSFS_SPOOF_UNAME=y
           CONFIG_KSU_SUSFS_ENABLE_LOG=y
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_KSU_SUSFS_SUS_SU=y
+          CONFIG_KSU_WITH_KPROBES=y
           CONFIG_SECURITY_SELINUX=y
           EOF
+          # 验证 .config 文件
           echo "Debug: Checking .config file"
           cat ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/.config
+          # 更新配置
           echo "Debug: Running make olddefconfig"
           make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig || exit 1
 
+      # 编译内核
       - name: Compile kernel
         run: |
-          cd kernel_workspace/kernel_platform/common
-          echo "Debug: Compiling kernel directly with make"
-          make -C . O=../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc) Image || exit 1
-          # 如果需要生成完整的 boot 镜像，可以添加后续步骤
-          echo "Debug: Kernel Image compiled at ../out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/arch/arm64/boot/Image"
+          cd kernel_workspace
+          ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
 
+      # 打包内核
       - name: Package kernel with AnyKernel3
         run: |
           cd kernel_workspace
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth=1
           rm -rf AnyKernel3/.git
-          cp kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/arch/arm64/boot/Image ./AnyKernel3/
+          cp kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.CPUD }}-gki/dist/Image ./AnyKernel3/
 
+      # 上传构建产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: KernelSU_Next_${{ env.KSUVER }}_${{ github.event.inputs.FEIL }}
           path: |
             kernel_workspace/AnyKernel3/*
-            kernel_workspace/kernel_platform/out/msm-${{ github.event.inputs.CPUD }}-gki/arch/arm64/boot/Image
+            kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-gki/dist/Image
